@@ -1,0 +1,41 @@
+# Render Blueprint for the group-fund app.
+# Deploy: Render dashboard -> New -> Blueprint -> point at the repo containing this file.
+# Then create a Neon Postgres database and paste its connection string into DATABASE_URL.
+services:
+  - type: web
+    name: group-fund-app
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: npm start
+    healthCheckPath: /api/status
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: SESSION_SECRET
+        generateValue: true
+      - key: DATABASE_URL
+        sync: false # <-- paste the Neon Postgres connection string here (required)
+      # Optional: PayPal live/sandbox credentials can also be entered by the
+      # admin in the app's setup screen; env vars are only a fallback.
+      - key: PAYPAL_MODE
+        value: sandbox
+      - key: PAYPAL_CLIENT_ID
+        sync: false
+      - key: PAYPAL_CLIENT_SECRET
+        sync: false
+      - key: PAYPAL_WEBHOOK_ID
+        sync: false # required for real payments (webhook signature verification)
+      # Optional: SMTP for admin email notifications.
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: 587
+      - key: SMTP_USER
+        sync: false
+      - key: SMTP_PASS
+        sync: false
+      - key: MAIL_FROM
+        sync: false

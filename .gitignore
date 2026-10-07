@@ -1,0 +1,17 @@
+# dependencies
+node_modules/
+
+# secrets / local config
+.env
+
+# local sqlite database (dev only; production uses Postgres via DATABASE_URL)
+data/
+
+# legacy on-disk avatar uploads (avatars now live in the database)
+uploads/
+
+# logs
+*.log
+
+# native module build leftovers
+build/
