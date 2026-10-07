@@ -21,6 +21,13 @@ fs.mkdirSync(PUBLIC_DIR, { recursive: true });
 
 const app = express();
 
+// Render/Heroku-style hosting terminates TLS at the load balancer and talks
+// plain HTTP to this app. Without this, Express thinks every request is
+// insecure and express-session silently refuses to set the (secure: true in
+// production) session cookie — logins "succeed" but the browser never gets a
+// session, so users get stuck on the login page.
+app.set('trust proxy', 1);
+
 // Webhook route must see the RAW body for signature verification, so it is
 // registered BEFORE the JSON parser, using express.raw().
 app.post(
