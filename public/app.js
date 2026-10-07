@@ -119,6 +119,22 @@
   var navEl = document.getElementById('nav');
   var viewEl = document.getElementById('view');
 
+  /* Show/hide password toggles: one delegated listener covers every form
+     rendered into #view, every time it appears. Buttons carry
+     data-target=<input id>; see pwToggleHtml() below. */
+  viewEl.addEventListener('click', function (e) {
+    var t = e.target && e.target.closest ? e.target.closest('.pw-toggle') : null;
+    if (!t) return;
+    var input = document.getElementById(t.getAttribute('data-target'));
+    if (!input) return;
+    var show = input.type === 'password';
+    input.type = show ? 'text' : 'password';
+    t.classList.toggle('is-on', show);
+    t.setAttribute('aria-pressed', show ? 'true' : 'false');
+    t.setAttribute('aria-label', show ? 'Hide password' : 'Show password');
+    t.setAttribute('title', show ? 'Hide password' : 'Show password');
+  });
+
   async function refreshStatus() {
     try {
       status = await api('/api/status');
@@ -133,6 +149,19 @@
   function isAdmin() { return status.session && status.session.type === 'admin'; }
 
   /* ---------- shared HTML fragments ---------- */
+
+  var EYE_SVG = '<svg class="pw-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>';
+  var EYE_OFF_SVG = '<svg class="pw-icon" viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94"/><path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19"/><path d="M14.12 14.12a3 3 0 1 1-4.24-4.24"/><line x1="1" y1="23" x2="23" y2="23"/></svg>';
+
+  /* Small eye toggle placed inside .pw-wrap next to a password input.
+     Purely visual — auth logic untouched. */
+  function pwToggleHtml(inputId) {
+    return '<button type="button" class="pw-toggle" data-target="' + inputId + '"' +
+      ' aria-label="Show password" aria-pressed="false" title="Show password">' +
+      '<span class="pw-eye">' + EYE_SVG + '</span>' +
+      '<span class="pw-eye-off">' + EYE_OFF_SVG + '</span>' +
+      '</button>';
+  }
 
   function avatarHtml(url, name, size) {
     var sm = size === 'sm';
@@ -404,7 +433,8 @@
       '<div class="field"><label for="r-phone">Phone</label>' +
       '<input id="r-phone" name="phone" type="tel" autocomplete="tel" maxlength="30" placeholder="(555) 123-4567"></div>' +
       '<div class="field"><label for="r-pass">Password</label>' +
-      '<input id="r-pass" name="password" type="password" autocomplete="new-password" required minlength="4" placeholder="Choose a password"></div>' +
+      '<div class="pw-wrap"><input id="r-pass" name="password" type="password" autocomplete="new-password" required minlength="4" placeholder="Choose a password">' +
+      pwToggleHtml('r-pass') + '</div></div>' +
       '<button class="btn btn-green btn-block" type="submit" id="r-submit">Create account</button>' +
       '</form>' +
       '<p class="center muted">Already registered? <a href="#/login">Log in</a></p></div>';
@@ -447,7 +477,8 @@
       '<div class="field"><label for="l-email">Email</label>' +
       '<input id="l-email" type="email" autocomplete="email" required placeholder="you@example.com"></div>' +
       '<div class="field"><label for="l-pass">Password</label>' +
-      '<input id="l-pass" type="password" autocomplete="current-password" required placeholder="Your password"></div>' +
+      '<div class="pw-wrap"><input id="l-pass" type="password" autocomplete="current-password" required placeholder="Your password">' +
+      pwToggleHtml('l-pass') + '</div></div>' +
       '<button class="btn btn-blue btn-block" type="submit" id="l-submit">Log in as contributor</button>' +
       '</form>' +
       '<p class="center muted">New here? <a href="#/register">Create an account</a></p></div>';
@@ -515,7 +546,8 @@
       '<div class="field"><label for="c-phone">Phone</label>' +
       '<input id="c-phone" type="tel" autocomplete="tel" maxlength="30" placeholder="(555) 123-4567"></div>' +
       '<div class="field"><label for="c-pass">Password</label>' +
-      '<input id="c-pass" type="password" autocomplete="new-password" required minlength="4" placeholder="Choose a strong password"></div>' +
+      '<div class="pw-wrap"><input id="c-pass" type="password" autocomplete="new-password" required minlength="4" placeholder="Choose a strong password">' +
+      pwToggleHtml('c-pass') + '</div></div>' +
       '<button class="btn btn-amber btn-block" type="submit" id="c-submit">Claim admin seat</button>' +
       '</form></div>';
 
@@ -579,7 +611,8 @@
       '<input id="s-cid" type="text" autocomplete="off" spellcheck="false" placeholder="From your PayPal Business app" value="' + val(existing && existing.paypalClientId) + '">' +
       '<div class="hint">From your PayPal Business dashboard (Developer → Apps).</div></div>' +
       '<div class="field"><label for="s-secret">PayPal Secret</label>' +
-      '<input id="s-secret" type="password" autocomplete="new-password" placeholder="Stored server-side, never shown">' +
+      '<div class="pw-wrap"><input id="s-secret" type="password" autocomplete="new-password" placeholder="Stored server-side, never shown">' +
+      pwToggleHtml('s-secret') + '</div>' +
       '<div class="hint">Real credentials entered here are stored server-side only — they are never sent to browsers.</div></div>' +
       '<button class="btn btn-green btn-block" type="submit" id="s-submit">Save fund settings</button>' +
       '</form></div>';

@@ -521,3 +521,48 @@ input[type="file"].file-input { font: inherit; font-size: 1rem; }
   .card { padding: 28px; }
   .hero .fund-name { font-size: 2.1rem; }
 }
+
+/* ---------- show/hide password toggle ---------- */
+.pw-wrap { position: relative; }
+.pw-wrap input { padding-right: 60px; } /* room for the eye button */
+.pw-toggle {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 46px;
+  height: 46px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: none;
+  border-radius: 13px;
+  cursor: pointer;
+  color: #5b5470;
+  background: linear-gradient(180deg, #ffffff, #e9e6f5);
+  box-shadow:
+    0 3px 0 rgba(91, 33, 182, .14),
+    0 6px 12px rgba(0, 0, 0, .10),
+    inset 0 1px 0 #ffffff; /* top gloss, matches .btn */
+  transition: transform .06s ease, box-shadow .06s ease, filter .15s ease, color .15s ease;
+  touch-action: manipulation;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.pw-toggle:hover { filter: brightness(1.05); }
+.pw-toggle:active {
+  transform: translateY(-50%) translateY(2px);
+  box-shadow:
+    0 1px 0 rgba(91, 33, 182, .14),
+    0 3px 8px rgba(0, 0, 0, .10),
+    inset 0 1px 0 #ffffff;
+}
+.pw-toggle:focus-visible {
+  outline: 3px solid rgba(139, 92, 246, .55);
+  outline-offset: 2px;
+}
+.pw-toggle .pw-icon { display: inline-flex; pointer-events: none; }
+.pw-toggle .pw-eye-off { display: none; }
+.pw-toggle.is-on { color: #7c3aed; }
+.pw-toggle.is-on .pw-eye { display: none; }
+.pw-toggle.is-on .pw-eye-off { display: inline-flex; }
