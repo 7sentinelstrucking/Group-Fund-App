@@ -929,10 +929,44 @@
     }
     html += '</section>';
 
+    /* invite */
+    html += '<section class="card" aria-label="Invite contributors"><h2>Invite contributors ✉️</h2>' +
+      '<p class="muted">Send the fund link to anyone who wants to chip in. They register as a contributor and start paying their share.</p>' +
+      '<div class="mt"><button class="btn btn-green btn-block" id="invite-text" type="button">📩 Invite via text</button></div>' +
+      '<div class="mt"><button class="btn btn-blue btn-block" id="invite-copy" type="button">🔗 Copy invite link</button></div>' +
+      '<p class="muted center" id="invite-status" aria-live="polite"></p></section>';
+
     /* quick link */
     html += '<div class="center"><a class="btn btn-ghost" href="#/">View public fund page</a></div>';
 
     viewEl.innerHTML = html;
+
+    /* invite wiring */
+    (function () {
+      var inviteText = document.getElementById('invite-text');
+      var inviteCopy = document.getElementById('invite-copy');
+      var inviteStatus = document.getElementById('invite-status');
+      var inviteUrl = location.origin + '/';
+      function setStatus(msg) { if (inviteStatus) inviteStatus.textContent = msg; }
+      if (inviteText) inviteText.addEventListener('click', function () {
+        if (navigator.share) {
+          navigator.share({ title: 'Group Fund', text: 'Join our Group Fund — chip in with the crew!', url: inviteUrl })
+            .catch(function () { /* user dismissed the share sheet */ });
+        } else {
+          location.href = 'sms:?body=' + encodeURIComponent('Join our Group Fund — chip in with the crew! ' + inviteUrl);
+        }
+      });
+      if (inviteCopy) inviteCopy.addEventListener('click', function () {
+        if (navigator.clipboard && navigator.clipboard.writeText) {
+          navigator.clipboard.writeText(inviteUrl).then(
+            function () { setStatus('Link copied — paste it anywhere.'); },
+            function () { setStatus('Copy failed — long-press the address bar to copy the link.'); });
+        } else {
+          setStatus('Copy not supported here — long-press the address bar to copy the link.');
+        }
+      });
+    })();
+
     animateBars(viewEl);
   }
 
