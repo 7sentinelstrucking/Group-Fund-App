@@ -39,6 +39,7 @@ CREATE TABLE IF NOT EXISTS admins (
   paypal_client_id TEXT,
   paypal_secret TEXT,
   paypal_mode TEXT DEFAULT 'sandbox',
+  contributor_user_id INTEGER REFERENCES users(id),
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -89,10 +90,12 @@ CREATE TABLE IF NOT EXISTS notifications (
 );
 `;
 
-// Late-added columns, for databases created before avatars moved into the DB.
+// Late-added columns, for databases created before avatars moved into the DB,
+// and before the admin became a contributor too.
 const MIGRATIONS_SQLITE = [
   'ALTER TABLE users ADD COLUMN avatar_data BLOB',
   'ALTER TABLE users ADD COLUMN avatar_mime TEXT',
+  'ALTER TABLE admins ADD COLUMN contributor_user_id INTEGER REFERENCES users(id)',
 ];
 
 const SCHEMA_PG = `
@@ -105,6 +108,7 @@ CREATE TABLE IF NOT EXISTS admins (
   paypal_client_id TEXT,
   paypal_secret TEXT,
   paypal_mode TEXT DEFAULT 'sandbox',
+  contributor_user_id BIGINT REFERENCES users(id),
   created_at TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 
@@ -158,6 +162,7 @@ CREATE TABLE IF NOT EXISTS notifications (
 const MIGRATIONS_PG = [
   'ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_data BYTEA',
   'ALTER TABLE users ADD COLUMN IF NOT EXISTS avatar_mime TEXT',
+  'ALTER TABLE admins ADD COLUMN IF NOT EXISTS contributor_user_id BIGINT REFERENCES users(id)',
 ];
 
 // ---------------------------------------------------------------------------
@@ -354,6 +359,36 @@ async function claimAdmin({ name, email, phone, passwordHash }) {
   return info.changes === 1;
 }
 
+// The admin is also a contributor: they get a row in `users` (same
+// name/email/phone/password) so they show up in the contributors grid,
+// scoreboard, and ledger like everyone else. Called after claim, after
+// admin login, and at fund setup — so admins who claimed before this
+// feature existed get backfilled on their next visit. Idempotent.
+// Matches by email first: if the admin already registered as a
+// contributor, that row is adopted instead of creating a duplicate.
+async function ensureAdminContributor(admin) {
+  if (!admin) throw new Error('admin required');
+  if (admin.contributor_user_id) {
+    const linked = await getUser(admin.contributor_user_id);
+    if (linked) return linked.id;
+  }
+  let user = await getUserByEmail(admin.email);
+  if (!user) {
+    user = await registerUser({
+      name: admin.name,
+      email: admin.email,
+      phone: admin.phone,
+      passwordHash: admin.password_hash,
+    });
+  }
+  if (isPg()) {
+    await pq('UPDATE admins SET contributor_user_id = $1 WHERE id = 1', [user.id]);
+  } else {
+    srun('UPDATE admins SET contributor_user_id = ? WHERE id = 1', user.id);
+  }
+  return user.id;
+}
+
 async function setupFund({ name, goalCents, numContributors, monthlyCents, dueDay, paypalClientId, paypalSecret, paypalMode }) {
   if (isPg()) {
     await pgTx(async (c) => {
@@ -472,21 +507,24 @@ async function deletePendingOrder(orderId) {
 // Record a confirmed payment. Returns true when this call inserted the row,
 // false when the order was already recorded (idempotent — the UNIQUE
 // constraint on paypal_order_id makes double-processing safe).
-async function recordPayment({ userId, amountCents, orderId, status = 'confirmed', source = 'paypal' }) {
+// Optional createdAt ('YYYY-MM-DD HH:MM:SS') backdates the payment, used for
+// manually recorded admin contributions; defaults to now.
+async function recordPayment({ userId, amountCents, orderId, status = 'confirmed', source = 'paypal', createdAt = null }) {
   if (isPg()) {
     const pool = await pgReady();
     const res = await pool.query(
-      `INSERT INTO payments (user_id, amount_cents, paypal_order_id, status, source)
-       VALUES ($1, $2, $3, $4, $5)
+      `INSERT INTO payments (user_id, amount_cents, paypal_order_id, status, source, created_at)
+       VALUES ($1, $2, $3, $4, $5, COALESCE($6::timestamptz, now()))
        ON CONFLICT (paypal_order_id) DO NOTHING
        RETURNING id`,
-      [userId, amountCents, orderId, status, source]
+      [userId, amountCents, orderId, status, source, createdAt]
     );
     return res.rowCount === 1;
   }
   const info = srun(
-    'INSERT OR IGNORE INTO payments (user_id, amount_cents, paypal_order_id, status, source) VALUES (?, ?, ?, ?, ?)',
-    userId, amountCents, orderId, status, source
+    `INSERT OR IGNORE INTO payments (user_id, amount_cents, paypal_order_id, status, source, created_at)
+     VALUES (?, ?, ?, ?, ?, COALESCE(?, datetime('now')))`,
+    userId, amountCents, orderId, status, source, createdAt
   );
   return info.changes === 1;
 }
@@ -595,6 +633,7 @@ module.exports = {
   getUserByEmail,
   getAdminByEmail,
   claimAdmin,
+  ensureAdminContributor,
   setupFund,
   registerUser,
   setAvatar,

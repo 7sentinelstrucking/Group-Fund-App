@@ -37,6 +37,12 @@
     return d.toLocaleString('en-US', { month: 'short' }) + " '" + String(d.getFullYear()).slice(2);
   }
 
+  function todayISO() {
+    var d = new Date();
+    function p(n) { return String(n).padStart(2, '0'); }
+    return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
+  }
+
   async function api(path, opts) {
     opts = opts || {};
     var fetchOpts = {
@@ -346,7 +352,7 @@
           var cpct = share > 0 ? (c.totalCents / share) * 100 : 0;
           html += '<div class="contrib-card" style="--accent:hsl(' + hue + ',70%,55%)">' +
             avatarWithDot(c.avatarUrl, c.name, !!c.paidInFull) +
-            '<div class="cname">' + esc(c.name) + '</div>' +
+            '<div class="cname">' + esc(c.name) + (c.isAdmin ? ' 👑' : '') + '</div>' +
             '<div class="cbar">' + progressBar(Math.min(100, cpct), c.name + ' progress') + '</div>' +
             '<div class="camounts">' + centsToDollars(c.totalCents) + ' paid of ' +
               centsToDollars(share) + ' share</div>' +
@@ -536,7 +542,8 @@
       '<div class="card" style="--card-stripe: linear-gradient(90deg,#f59e0b,#ec4899)">' +
       '<h2>Claim the admin seat 👑</h2>' +
       '<p class="muted">The first person to claim becomes the fund\'s <strong>permanent</strong> admin. ' +
-      'After this, the seat locks forever and this link becomes contributor-only.</p>' +
+      'After this, the seat locks forever and this link becomes contributor-only. ' +
+      'You\'ll also be added as a contributor automatically — the admin chips in like everyone else.</p>' +
       '<form id="claim-form" novalidate>' +
       '<div class="form-error" role="alert"></div>' +
       '<div class="field"><label for="c-name">Your name</label>' +
@@ -598,7 +605,8 @@
       '<input id="s-goal" type="number" min="1" step="0.01" required placeholder="6000" value="' + val(existing && (existing.goalCents / 100)) + '">' +
       '<div class="hint">Total amount the group is raising.</div></div>' +
       '<div class="field"><label for="s-num">Number of contributors</label>' +
-      '<input id="s-num" type="number" min="1" step="1" required placeholder="8" value="' + val(existing && existing.numContributors) + '"></div>' +
+      '<input id="s-num" type="number" min="1" step="1" required placeholder="8" value="' + val(existing && existing.numContributors) + '">' +
+      '<div class="hint">Total members including yourself — you\'re a contributor too.</div></div>' +
       '<div class="field"><label for="s-monthly">Monthly amount per contributor (dollars)</label>' +
       '<input id="s-monthly" type="number" min="0.01" step="0.01" required placeholder="62.50" value="' + val(existing && (existing.monthlyCents / 100)) + '"></div>' +
       '<div class="field"><label for="s-dueday">Monthly due day (1–28)</label>' +
@@ -913,6 +921,38 @@
     }
     html += '</section>';
 
+    /* my contributions — the admin is a contributor too */
+    var me = null;
+    (fundData.contributors || []).forEach(function (c) { if (c.isAdmin) me = c; });
+    html += '<section class="card" aria-label="My contributions"><h2>My contributions 💪</h2>';
+    if (!fund) {
+      html += '<p class="muted">Set up the fund first, then your share will show up here.</p>';
+    } else {
+      if (me) {
+        var mpct = me.shareCents > 0 ? (me.totalCents / me.shareCents) * 100 : 0;
+        html += '<div class="row"><div style="flex:1;min-width:0">' +
+          '<div style="font-size:1.6rem;font-weight:900">' + centsToDollars(me.totalCents) + '</div>' +
+          '<div class="muted" style="font-weight:700">paid of ' + centsToDollars(me.shareCents) + ' share</div>' +
+          '</div>' +
+          (me.paidInFull ? '<span class="cell-pill cell-paid" style="font-size:.9rem">✓ Paid in full</span>' : '') +
+          '</div>' +
+          '<div class="mt">' + progressBar(Math.min(100, mpct), 'My contribution progress') + '</div>' +
+          '<div class="progress-labels"><span>' + mpct.toFixed(1) + '% of my share</span></div>';
+      }
+      html += '<h3>Record a contribution</h3>' +
+        '<p class="muted">Money you put in directly — no PayPal fee, since it\'s your own account. ' +
+        'Shows up in the ledger and scoreboard like any other payment.</p>' +
+        '<form id="manual-pay-form" novalidate>' +
+        '<div class="form-error" role="alert"></div>' +
+        '<div class="field"><label for="mp-amount">Amount (USD)</label>' +
+        '<input id="mp-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="62.50" required></div>' +
+        '<div class="field"><label for="mp-date">Date</label>' +
+        '<input id="mp-date" type="date" value="' + todayISO() + '"></div>' +
+        '<button class="btn btn-green btn-block" type="submit" id="mp-submit">Record contribution</button>' +
+        '</form>';
+    }
+    html += '</section>';
+
     /* notifications */
     html += '<section class="card" aria-label="Notifications"><h2>Notifications 🔔</h2>';
     var notifs = (notifData && notifData.notifications) || [];
@@ -940,6 +980,32 @@
     html += '<div class="center"><a class="btn btn-ghost" href="#/">View public fund page</a></div>';
 
     viewEl.innerHTML = html;
+
+    /* manual contribution form wiring */
+    (function () {
+      var form = document.getElementById('manual-pay-form');
+      if (!form) return;
+      form.addEventListener('submit', async function (e) {
+        e.preventDefault();
+        clearFormError(form);
+        var amount = parseFloat(document.getElementById('mp-amount').value);
+        var date = document.getElementById('mp-date').value;
+        if (!(amount > 0)) { formError(form, 'Enter an amount greater than $0.'); return; }
+        var btn = document.getElementById('mp-submit');
+        setBusy(btn, true, 'Recording…');
+        try {
+          var r = await api('/api/admin/record-payment', {
+            method: 'POST',
+            body: { amountDollars: amount, date: date }
+          });
+          toast('Recorded ' + centsToDollars(r.amountCents) + ' — new total ' + centsToDollars(r.totalCents) + ' 🎉');
+          renderAdminPanel();
+        } catch (err) {
+          formError(form, err.message);
+          setBusy(btn, false);
+        }
+      });
+    })();
 
     /* invite wiring */
     (function () {

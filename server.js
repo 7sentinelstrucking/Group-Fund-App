@@ -180,6 +180,9 @@ app.post('/api/admin/claim', async (req, res) => {
       passwordHash: hash,
     });
     if (!claimed) return res.status(409).json({ error: 'Admin seat already claimed' });
+    // The admin is also a contributor: create their contributor account now.
+    const admin = await db.getAdmin();
+    await db.ensureAdminContributor(admin);
     return res.json({ ok: true });
   } catch (err) {
     console.error('[admin/claim]', err.message);
@@ -198,12 +201,18 @@ app.post('/api/admin/login', async (req, res) => {
   req.session.uid = admin.id;
   req.session.name = admin.name;
   req.session.avatarUrl = null;
+  // Backfill: admins who claimed before the admin-is-contributor change
+  // get their contributor account on next login.
+  await db.ensureAdminContributor(admin);
   return res.json({ ok: true });
 });
 
 app.post('/api/admin/setup', requireAdmin, async (req, res) => {
   const { fundName, goalDollars, numContributors, monthlyDollars, dueDay, paypalClientId, paypalSecret, paypalMode } = req.body || {};
   if (!fundName || String(fundName).trim().length === 0) return res.status(400).json({ error: 'fundName is required' });
+
+  // The admin is also a contributor — make sure their contributor account exists.
+  await db.ensureAdminContributor(await db.getAdmin());
 
   const goalCents = Math.round(Number(goalDollars) * 100);
   const n = parseInt(numContributors, 10);
@@ -236,6 +245,49 @@ app.post('/api/admin/setup', requireAdmin, async (req, res) => {
 
 app.get('/api/admin/notifications', requireAdmin, async (req, res) => {
   res.json({ notifications: await db.recentNotifications(50) });
+});
+
+// Record one of the admin's own contributions. The admin is a contributor
+// too, but paying themselves through PayPal would just burn a card fee —
+// so they log money put in directly (source='manual'). Shows up in the
+// ledger, scoreboard, and progress bars like any other payment. No email
+// notification: it's their own money, they know.
+app.post('/api/admin/record-payment', requireAdmin, async (req, res) => {
+  const { amountDollars, date } = req.body || {};
+  const amountCents = Math.round(Number(amountDollars) * 100);
+  if (!Number.isFinite(amountCents) || amountCents <= 0 || amountCents > 10_000_000) {
+    return res.status(400).json({ error: 'amountDollars must be between $0.01 and $100,000' });
+  }
+  let createdAt = null;
+  if (date !== undefined && date !== null && String(date).trim() !== '') {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(date).trim());
+    if (!m) return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+    const dt = new Date(Date.UTC(Number(m[1]), Number(m[2]) - 1, Number(m[3]), 12, 0, 0));
+    if (isNaN(dt.getTime())) return res.status(400).json({ error: 'Invalid date' });
+    if (dt.getTime() > Date.now() + 24 * 3600 * 1000) {
+      return res.status(400).json({ error: 'Date cannot be in the future' });
+    }
+    const p = (n) => String(n).padStart(2, '0');
+    createdAt = `${m[1]}-${m[2]}-${m[3]} 12:00:00`;
+  }
+  try {
+    const admin = await db.getAdmin();
+    const contributorId = await db.ensureAdminContributor(admin);
+    const orderId = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    await db.recordPayment({
+      userId: contributorId,
+      amountCents,
+      orderId,
+      status: 'confirmed',
+      source: 'manual',
+      createdAt,
+    });
+    const total = await db.sumPaymentsByUser(contributorId);
+    return res.json({ ok: true, amountCents, totalCents: total });
+  } catch (err) {
+    console.error('[admin/record-payment]', err.message);
+    return res.status(500).json({ error: 'Could not record contribution' });
+  }
 });
 
 // --- users --------------------------------------------------------------------
@@ -333,6 +385,8 @@ app.get('/uploads/:file', async (req, res) => {
 app.get('/api/fund', async (req, res) => {
   const fund = await db.getFund();
   const users = await db.allUsers();
+  const admin = await db.getAdmin();
+  const adminUserId = admin && admin.contributor_user_id ? Number(admin.contributor_user_id) : null;
   const shareCents = fund ? Math.round(fund.goal_cents / fund.num_contributors) : 0;
   const contributors = [];
   for (const u of users) {
@@ -344,6 +398,7 @@ app.get('/api/fund', async (req, res) => {
       totalCents,
       shareCents,
       paidInFull: totalCents >= shareCents,
+      isAdmin: adminUserId !== null && u.id === adminUserId,
     });
   }
   res.json({
