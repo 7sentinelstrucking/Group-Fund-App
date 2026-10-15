@@ -247,13 +247,15 @@ app.get('/api/admin/notifications', requireAdmin, async (req, res) => {
   res.json({ notifications: await db.recentNotifications(50) });
 });
 
-// Record one of the admin's own contributions. The admin is a contributor
-// too, but paying themselves through PayPal would just burn a card fee —
-// so they log money put in directly (source='manual'). Shows up in the
-// ledger, scoreboard, and progress bars like any other payment. No email
-// notification: it's their own money, they know.
+// Record a contribution for any contributor (admin only). The admin is a
+// contributor too, but paying themselves through PayPal would just burn a
+// card fee — so they log money put in directly (source='manual'). Shows up in
+// the ledger, scoreboard, and progress bars like any other payment.
+// Optional body.userId targets another contributor (e.g. cash/Venmo/Zelle
+// handed to the admin); without it, records the admin's own contribution.
+// No email notification: it's money the admin already knows about.
 app.post('/api/admin/record-payment', requireAdmin, async (req, res) => {
-  const { amountDollars, date } = req.body || {};
+  const { amountDollars, date, userId } = req.body || {};
   const amountCents = Math.round(Number(amountDollars) * 100);
   if (!Number.isFinite(amountCents) || amountCents <= 0 || amountCents > 10_000_000) {
     return res.status(400).json({ error: 'amountDollars must be between $0.01 and $100,000' });
@@ -271,8 +273,21 @@ app.post('/api/admin/record-payment', requireAdmin, async (req, res) => {
     createdAt = `${m[1]}-${m[2]}-${m[3]} 12:00:00`;
   }
   try {
-    const admin = await db.getAdmin();
-    const contributorId = await db.ensureAdminContributor(admin);
+    let contributorId;
+    let targetName = null;
+    if (userId !== undefined && userId !== null && String(userId).trim() !== '') {
+      const uid = Number(userId);
+      if (!Number.isInteger(uid) || uid <= 0) {
+        return res.status(400).json({ error: 'Invalid contributor' });
+      }
+      const target = await db.getUser(uid);
+      if (!target) return res.status(400).json({ error: 'Contributor not found' });
+      contributorId = target.id;
+      targetName = target.name;
+    } else {
+      const admin = await db.getAdmin();
+      contributorId = await db.ensureAdminContributor(admin);
+    }
     const orderId = `MANUAL-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
     await db.recordPayment({
       userId: contributorId,
@@ -283,10 +298,22 @@ app.post('/api/admin/record-payment', requireAdmin, async (req, res) => {
       createdAt,
     });
     const total = await db.sumPaymentsByUser(contributorId);
-    return res.json({ ok: true, amountCents, totalCents: total });
+    return res.json({ ok: true, amountCents, totalCents: total, userId: contributorId, userName: targetName });
   } catch (err) {
     console.error('[admin/record-payment]', err.message);
     return res.status(500).json({ error: 'Could not record contribution' });
+  }
+});
+
+// Delete all demo-mode test payments (admin only). Demo payments are tagged
+// source='demo'; real 'paypal'/'manual' payments are never touched.
+app.post('/api/admin/clear-demo-payments', requireAdmin, async (req, res) => {
+  try {
+    const deleted = await db.clearDemoPayments();
+    return res.json({ ok: true, deleted });
+  } catch (err) {
+    console.error('[admin/clear-demo-payments]', err.message);
+    return res.status(500).json({ error: 'Could not clear demo payments' });
   }
 });
 

@@ -953,6 +953,43 @@
     }
     html += '</section>';
 
+    /* record a contributor's payment — cash/Venmo/Zelle handed to the admin */
+    html += '<section class="card" aria-label="Record contributor payments"><h2>Record a contributor\'s payment 💵</h2>';
+    if (!fund) {
+      html += '<p class="muted">Set up the fund first, then you can log payments here.</p>';
+    } else {
+      var contribs2 = fundData.contributors || [];
+      var monthlyDollars = fund.monthlyCents > 0 ? (fund.monthlyCents / 100).toFixed(2) : '';
+      if (!contribs2.length) {
+        html += '<p class="muted">No contributors have registered yet.</p>';
+      } else {
+        html += '<p class="muted">Someone paid you directly (cash, Venmo, Zelle)? Log it here — ' +
+          'it shows up in the ledger and scoreboard like a card payment, with no PayPal fee.</p>' +
+          '<div class="cp-list">';
+        contribs2.forEach(function (c) {
+          html += '<div class="cp-row" data-uid="' + c.id + '">' +
+            '<div class="cp-who">' + avatarHtml(c.avatarUrl, c.name, 'sm') +
+            '<span class="cp-name">' + esc(c.name) + (c.isAdmin ? ' 👑' : '') + '</span></div>' +
+            '<div class="cp-fields">' +
+            '<input class="cp-amount" type="number" min="0.01" step="0.01" inputmode="decimal" ' +
+              'value="' + monthlyDollars + '" aria-label="Amount for ' + esc(c.name) + '">' +
+            '<input class="cp-date" type="date" value="' + todayISO() + '" aria-label="Date for ' + esc(c.name) + '">' +
+            '<button class="btn btn-green btn-sm cp-record" type="button">Record</button>' +
+            '</div><div class="cp-status muted" aria-live="polite"></div></div>';
+        });
+        html += '</div>';
+      }
+    }
+    html += '</section>';
+
+    /* demo data — wipe test payments before going live */
+    html += '<section class="card" aria-label="Demo data"><h2>Demo data 🧹</h2>' +
+      '<p class="muted">Removes every <strong>demo-mode test payment</strong> from the ledger, totals, ' +
+      'and scoreboard. Real PayPal and manually recorded payments are never touched.</p>' +
+      '<div class="mt"><button class="btn btn-amber btn-block" id="clear-demo-btn" type="button">' +
+      'Clear demo payments</button></div>' +
+      '<p class="muted center" id="clear-demo-status" aria-live="polite"></p></section>';
+
     /* notifications */
     html += '<section class="card" aria-label="Notifications"><h2>Notifications 🔔</h2>';
     var notifs = (notifData && notifData.notifications) || [];
@@ -1002,6 +1039,58 @@
           renderAdminPanel();
         } catch (err) {
           formError(form, err.message);
+          setBusy(btn, false);
+        }
+      });
+    })();
+
+    /* per-contributor record wiring */
+    (function () {
+      var rows = viewEl.querySelectorAll('.cp-row');
+      rows.forEach(function (row) {
+        var btn = row.querySelector('.cp-record');
+        var statusEl = row.querySelector('.cp-status');
+        if (!btn) return;
+        btn.addEventListener('click', async function () {
+          var uid = row.getAttribute('data-uid');
+          var amount = parseFloat(row.querySelector('.cp-amount').value);
+          var date = row.querySelector('.cp-date').value;
+          statusEl.textContent = '';
+          if (!(amount > 0)) { statusEl.textContent = 'Enter an amount greater than $0.'; return; }
+          setBusy(btn, true, 'Recording…');
+          try {
+            var r = await api('/api/admin/record-payment', {
+              method: 'POST',
+              body: { userId: uid, amountDollars: amount, date: date }
+            });
+            toast('Recorded ' + centsToDollars(r.amountCents) + ' for ' + (r.userName || 'contributor') + ' 🎉');
+            renderAdminPanel();
+          } catch (err) {
+            statusEl.textContent = err.message;
+            setBusy(btn, false);
+          }
+        });
+      });
+    })();
+
+    /* clear demo payments wiring */
+    (function () {
+      var btn = document.getElementById('clear-demo-btn');
+      var statusEl = document.getElementById('clear-demo-status');
+      if (!btn) return;
+      btn.addEventListener('click', async function () {
+        if (!window.confirm('Delete all demo-mode test payments? Real payments are never touched.')) return;
+        setBusy(btn, true, 'Clearing…');
+        statusEl.textContent = '';
+        try {
+          var r = await api('/api/admin/clear-demo-payments', { method: 'POST' });
+          var n = Number(r.deleted) || 0;
+          statusEl.textContent = n === 0 ? 'No demo payments found — nothing to clear.' :
+            'Cleared ' + n + ' demo payment' + (n === 1 ? '' : 's') + '. 🎉';
+          toast('Demo payments cleared');
+          renderAdminPanel();
+        } catch (err) {
+          statusEl.textContent = err.message;
           setBusy(btn, false);
         }
       });

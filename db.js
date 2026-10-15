@@ -622,6 +622,15 @@ async function recentConfirmedPayments(limit = 50) {
   }));
 }
 
+async function clearDemoPayments() {
+  if (isPg()) {
+    const res = await pq("DELETE FROM payments WHERE source = 'demo'");
+    return res.rowCount;
+  }
+  const info = srun("DELETE FROM payments WHERE source = 'demo'");
+  return info.changes;
+}
+
 module.exports = {
   isPg,
   getPool,
@@ -651,4 +660,5 @@ module.exports = {
   addNotification,
   recentNotifications,
   recentConfirmedPayments,
+  clearDemoPayments,
 };

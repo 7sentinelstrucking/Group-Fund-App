@@ -566,3 +566,14 @@ input[type="file"].file-input { font: inherit; font-size: 1rem; }
 .pw-toggle.is-on { color: #7c3aed; }
 .pw-toggle.is-on .pw-eye { display: none; }
 .pw-toggle.is-on .pw-eye-off { display: inline-flex; }
+
+/* record-a-contributor-payment rows */
+.cp-list { display: flex; flex-direction: column; gap: 10px; }
+.cp-row { border: 1px solid #e3ddd0; border-radius: 10px; padding: 10px 12px; background: #fffdf8; }
+.cp-who { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.cp-name { font-weight: 700; }
+.cp-fields { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.cp-amount { width: 110px; }
+.cp-date { flex: 1; min-width: 130px; }
+.cp-row input { padding: 10px 12px; font-size: 1rem; border: 1px solid #d8d2c2; border-radius: 8px; }
+.cp-status { margin-top: 6px; font-size: .85em; min-height: 1.2em; }
