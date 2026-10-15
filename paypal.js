@@ -45,7 +45,7 @@ let tokenCache = null; // { accessToken, expiresAt }
 
 async function getAccessToken() {
   const url = await baseUrl();
-  const { clientId, secret } = getCredentials();
+  const { clientId, secret } = await getCredentials();
   if (!clientId || !secret) {
     throw new Error('PayPal credentials not configured');
   }
