@@ -718,10 +718,10 @@
       var el = document.getElementById(p + '-status');
       if (el) el.textContent = msg;
     }
-    var btn = document.getElementById(p + '-btn');
-    if (!btn) return;
 
     if (payCfg.demoMode) {
+      var btn = document.getElementById(p + '-btn');
+      if (!btn) return;
       btn.addEventListener('click', async function () {
         var amt = readAmount();
         if (amt == null) { setPayStatus('Enter an amount greater than $0 first.'); return; }
