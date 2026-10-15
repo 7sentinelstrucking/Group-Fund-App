@@ -577,3 +577,16 @@ input[type="file"].file-input { font: inherit; font-size: 1rem; }
 .cp-date { flex: 1; min-width: 130px; }
 .cp-row input { padding: 10px 12px; font-size: 1rem; border: 1px solid #d8d2c2; border-radius: 8px; }
 .cp-status { margin-top: 6px; font-size: .85em; min-height: 1.2em; }
+
+/* PayPal hosted card fields — match the app's input look */
+.cf-grid { margin: 4px 0 2px; }
+.cf-row { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+.cf-field {
+  width: 100%;
+  padding: 14px 15px;
+  border-radius: 14px;
+  border: 2px solid #d9d5ea;
+  background: #fbfbfe;
+  min-height: 56px;
+}
+.cf-field iframe { display: block; }

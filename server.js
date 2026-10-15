@@ -135,6 +135,27 @@ function requireUser(req, res, next) {
   return res.status(401).json({ error: 'Login required' });
 }
 
+// Allows a logged-in contributor OR the logged-in admin (paying as their own
+// contributor account) to reach the pay endpoints. Attaches req.payerId.
+async function requirePayer(req, res, next) {
+  try {
+    if (req.session && req.session.type === 'user') {
+      req.payerId = req.session.uid;
+      return next();
+    }
+    if (req.session && req.session.type === 'admin') {
+      const admin = await db.getAdmin();
+      if (!admin) return res.status(401).json({ error: 'Admin login required' });
+      req.payerId = await db.ensureAdminContributor(admin);
+      return next();
+    }
+    return res.status(401).json({ error: 'Login required' });
+  } catch (err) {
+    console.error('[requirePayer]', err.message);
+    return res.status(500).json({ error: 'Could not verify session' });
+  }
+}
+
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 function money(cents) {
@@ -212,7 +233,8 @@ app.post('/api/admin/setup', requireAdmin, async (req, res) => {
   if (!fundName || String(fundName).trim().length === 0) return res.status(400).json({ error: 'fundName is required' });
 
   // The admin is also a contributor — make sure their contributor account exists.
-  await db.ensureAdminContributor(await db.getAdmin());
+  const adminRow = await db.getAdmin();
+  await db.ensureAdminContributor(adminRow);
 
   const goalCents = Math.round(Number(goalDollars) * 100);
   const n = parseInt(numContributors, 10);
@@ -226,14 +248,22 @@ app.post('/api/admin/setup', requireAdmin, async (req, res) => {
   if (!Number.isInteger(d) || d < 1 || d > 28) return res.status(400).json({ error: 'dueDay must be 1–28' });
 
   try {
+    // Blank PayPal fields mean "keep what's saved" — the secret is never shown
+    // back in the form, so re-saving settings must not wipe it.
+    const keepClientId = paypalClientId && String(paypalClientId).trim()
+      ? String(paypalClientId).trim()
+      : (adminRow && adminRow.paypal_client_id) || null;
+    const keepSecret = paypalSecret && String(paypalSecret).trim()
+      ? String(paypalSecret).trim()
+      : (adminRow && adminRow.paypal_secret) || null;
     await db.setupFund({
       name: String(fundName).trim(),
       goalCents,
       numContributors: n,
       monthlyCents,
       dueDay: d,
-      paypalClientId: paypalClientId ? String(paypalClientId).trim() : null,
-      paypalSecret: paypalSecret ? String(paypalSecret).trim() : null,
+      paypalClientId: keepClientId,
+      paypalSecret: keepSecret,
       paypalMode: mode,
     });
   } catch (err) {
@@ -414,6 +444,7 @@ app.get('/api/fund', async (req, res) => {
   const users = await db.allUsers();
   const admin = await db.getAdmin();
   const adminUserId = admin && admin.contributor_user_id ? Number(admin.contributor_user_id) : null;
+  const isAdminReq = req.session && req.session.type === 'admin';
   const shareCents = fund ? Math.round(fund.goal_cents / fund.num_contributors) : 0;
   const contributors = [];
   for (const u of users) {
@@ -437,6 +468,11 @@ app.get('/api/fund', async (req, res) => {
           monthlyCents: fund.monthly_cents,
           dueDay: fund.due_day,
           createdAt: fund.created_at,
+          // Client ID is public by design (it ships in the PayPal SDK URL).
+          // Only the admin's own browser ever sees it here.
+          ...(isAdminReq
+            ? { paypalClientId: admin.paypal_client_id || null, paypalMode: admin.paypal_mode || null }
+            : {}),
         }
       : null,
     totalCents: await db.totalConfirmedCents(),
@@ -520,12 +556,12 @@ app.get('/api/pay/config', async (req, res) => {
   });
 });
 
-app.post('/api/pay/create-order', requireUser, async (req, res) => {
+app.post('/api/pay/create-order', requirePayer, async (req, res) => {
   const amountCents = Math.round(Number(req.body?.amountDollars) * 100);
   if (!Number.isFinite(amountCents) || amountCents <= 0 || amountCents > 10_000_000) {
     return res.status(400).json({ error: 'amountDollars must be between $0.01 and $100,000' });
   }
-  const userId = req.session.uid;
+  const userId = req.payerId;
 
   if (await isDemoMode()) {
     // DEMO MODE: no real PayPal call. Fake order id; nothing is charged.
@@ -544,10 +580,10 @@ app.post('/api/pay/create-order', requireUser, async (req, res) => {
   }
 });
 
-app.post('/api/pay/capture-order', requireUser, async (req, res) => {
+app.post('/api/pay/capture-order', requirePayer, async (req, res) => {
   const { orderId } = req.body || {};
   if (!orderId || typeof orderId !== 'string') return res.status(400).json({ error: 'orderId is required' });
-  const userId = req.session.uid;
+  const userId = req.payerId;
 
   const pending = await db.getPendingOrder(orderId);
   if (!pending) return res.status(404).json({ error: 'Order not found' });

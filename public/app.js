@@ -613,15 +613,15 @@
       '<input id="s-dueday" type="number" min="1" max="28" step="1" required placeholder="1" value="' + val(existing && existing.dueDay, '1') + '"></div>' +
       '<h3>PayPal (money goes straight to your account)</h3>' +
       '<div class="field"><label for="s-mode">PayPal mode</label>' +
-      '<select id="s-mode"><option value="sandbox" selected>Sandbox (test money)</option><option value="live">Live (real money)</option></select>' +
+      '<select id="s-mode"><option value="sandbox"' + (existing && existing.paypalMode === 'live' ? '' : ' selected') + '>Sandbox (test money)</option><option value="live"' + (existing && existing.paypalMode === 'live' ? ' selected' : '') + '>Live (real money)</option></select>' +
       '<div class="hint">Start with Sandbox to test. Switch to Live when ready for real payments.</div></div>' +
       '<div class="field"><label for="s-cid">PayPal Client ID</label>' +
       '<input id="s-cid" type="text" autocomplete="off" spellcheck="false" placeholder="From your PayPal Business app" value="' + val(existing && existing.paypalClientId) + '">' +
       '<div class="hint">From your PayPal Business dashboard (Developer → Apps).</div></div>' +
       '<div class="field"><label for="s-secret">PayPal Secret</label>' +
-      '<div class="pw-wrap"><input id="s-secret" type="password" autocomplete="new-password" placeholder="Stored server-side, never shown">' +
+      '<div class="pw-wrap"><input id="s-secret" type="password" autocomplete="new-password" placeholder="Saved — leave blank to keep it">' +
       pwToggleHtml('s-secret') + '</div>' +
-      '<div class="hint">Real credentials entered here are stored server-side only — they are never sent to browsers.</div></div>' +
+      '<div class="hint">Stored server-side only, never shown. Leave blank to keep the saved secret.</div></div>' +
       '<button class="btn btn-green btn-block" type="submit" id="s-submit">Save fund settings</button>' +
       '</form></div>';
 
@@ -678,12 +678,137 @@
     if (paypalSdkPromise) return paypalSdkPromise;
     paypalSdkPromise = new Promise(function (resolve, reject) {
       var s = document.createElement('script');
-      s.src = 'https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(clientId) + '&currency=USD';
+      s.src = 'https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(clientId) + '&currency=USD&components=card-fields';
       s.onload = function () { resolve(); };
       s.onerror = function () { reject(new Error('PayPal SDK failed to load. Check your connection and try again.')); };
       document.head.appendChild(s);
     });
     return paypalSdkPromise;
+  }
+
+  /* Single pay button shared by the contributor dashboard and the admin panel.
+     Demo mode: button says DEMO and the payment is simulated.
+     Live mode: button says PAY and PayPal hosted card fields are shown — credit card only. */
+  function paySectionHtml(payCfg, fund, p) {
+    var demo = !!payCfg.demoMode;
+    var suggested = fund && fund.monthlyCents > 0 ? (fund.monthlyCents / 100) : '';
+    var h = '';
+    if (demo) h += '<div class="demo-banner">DEMO MODE — no real money moves</div>';
+    h += '<div class="pay-amount-row"><div class="field"><label for="' + p + '-amount">Amount (USD)</label>' +
+      '<input id="' + p + '-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="25.00"' +
+      (suggested !== '' ? ' value="' + esc(String(suggested)) + '"' : '') + '></div></div>';
+    if (!demo) {
+      h += '<div class="cf-grid">' +
+        '<div class="field"><label>Card number</label><div id="' + p + '-card-number" class="cf-field"></div></div>' +
+        '<div class="cf-row">' +
+        '<div class="field"><label>Expiry</label><div id="' + p + '-card-expiry" class="cf-field"></div></div>' +
+        '<div class="field"><label>CVV</label><div id="' + p + '-card-cvv" class="cf-field"></div></div>' +
+        '</div></div>';
+    }
+    h += '<div class="muted" id="' + p + '-status" style="min-height:1.4em;margin:8px 0"></div>' +
+      '<button class="btn btn-block ' + (demo ? 'btn-amber' : 'btn-green') + '" id="' + p + '-btn" type="button">' +
+      (demo ? 'DEMO' : 'PAY') + '</button>';
+    if (!demo) {
+      h += '<p class="muted" style="font-size:.82rem">Secure card checkout by PayPal — credit card only. ' +
+        'Money goes straight to the admin\'s PayPal.</p>';
+    }
+    return h;
+  }
+
+  function wirePaySection(p, payCfg, onPaid) {
+    function readAmount() {
+      var raw = document.getElementById(p + '-amount').value;
+      var amt = parseFloat(raw);
+      return (isFinite(amt) && amt > 0) ? amt : null;
+    }
+    function setPayStatus(msg) {
+      var el = document.getElementById(p + '-status');
+      if (el) el.textContent = msg;
+    }
+    var btn = document.getElementById(p + '-btn');
+    if (!btn) return;
+
+    if (payCfg.demoMode) {
+      btn.addEventListener('click', async function () {
+        var amt = readAmount();
+        if (amt == null) { setPayStatus('Enter an amount greater than $0 first.'); return; }
+        setBusy(btn, true, 'Processing…');
+        setPayStatus('Creating demo order…');
+        try {
+          var o = await api('/api/pay/create-order', { method: 'POST', body: { amountDollars: amt } });
+          setPayStatus('Capturing demo order…');
+          var c = await api('/api/pay/capture-order', { method: 'POST', body: { orderId: o.orderId } });
+          setPayStatus('');
+          onPaid(c.amountCents);
+        } catch (err) {
+          setPayStatus('');
+          setBusy(btn, false);
+          toast(err.message);
+        }
+      });
+      return;
+    }
+
+    /* live: PayPal hosted card fields behind our own PAY button */
+    var clientId = payCfg.paypalClientId;
+    if (!clientId) {
+      setPayStatus('PayPal is not connected yet — the admin needs to add PayPal credentials in fund setup.');
+      btn.disabled = true;
+      return;
+    }
+    setPayStatus('Loading secure card checkout…');
+    setBusy(btn, true, 'Loading…');
+    loadPaypalSdk(clientId).then(function () {
+      setBusy(btn, false);
+      setPayStatus('');
+      if (!window.paypal || !window.paypal.CardFields) {
+        setPayStatus('Card checkout could not start. Please try again later.');
+        return;
+      }
+      var cardFields = window.paypal.CardFields({
+        createOrder: async function () {
+          var amt = readAmount();
+          if (amt == null) throw new Error('Enter an amount greater than $0 first.');
+          var r = await api('/api/pay/create-order', { method: 'POST', body: { amountDollars: amt } });
+          return r.orderId;
+        },
+        onApprove: async function (data) {
+          setPayStatus('Confirming your payment…');
+          try {
+            var r = await api('/api/pay/capture-order', { method: 'POST', body: { orderId: data.orderID } });
+            setPayStatus('');
+            onPaid(r.amountCents);
+          } catch (err) {
+            setPayStatus('');
+            toast(err.status === 402 ? err.message : 'Payment confirmation failed: ' + err.message);
+          }
+        },
+        onError: function (err) {
+          setPayStatus('');
+          toast((err && err.message) ? err.message : 'PayPal ran into a problem. Please try again.');
+        }
+      });
+      if (!cardFields.isEligible()) {
+        setPayStatus('Card payments are not available right now. Please try again later.');
+        return;
+      }
+      cardFields.NumberField().render('#' + p + '-card-number');
+      cardFields.ExpiryField().render('#' + p + '-card-expiry');
+      cardFields.CVVField().render('#' + p + '-card-cvv');
+      btn.addEventListener('click', function () {
+        var amt = readAmount();
+        if (amt == null) { setPayStatus('Enter an amount greater than $0 first.'); return; }
+        setBusy(btn, true, 'Processing…');
+        setPayStatus('Processing your card…');
+        cardFields.submit().then(
+          function () { setBusy(btn, false); },
+          function () { setBusy(btn, false); setPayStatus(''); }
+        );
+      });
+    }).catch(function (err) {
+      setBusy(btn, false);
+      setPayStatus(err.message);
+    });
   }
 
   async function renderDashboard() {
@@ -744,23 +869,9 @@
       '<div class="hint" id="avatar-hint">JPG, PNG, GIF or WebP.</div></div>' +
       '</section>';
 
-    /* pay section */
-    var suggested = fund ? (fund.monthlyCents / 100) : '';
-    html += '<section class="card" aria-label="Make a payment"><h2>Chip in 💸</h2>';
-    if (payCfg.demoMode) {
-      html += '<div class="demo-banner">🧪 DEMO MODE — no real money moves</div>';
-    }
-    html += '<div class="pay-amount-row"><div class="field"><label for="pay-amount">Amount (USD)</label>' +
-      '<input id="pay-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="25.00"' +
-      (suggested !== '' ? ' value="' + esc(String(suggested)) + '"' : '') + '></div></div>' +
-      '<div class="muted" id="pay-status" style="min-height:1.4em;margin:8px 0"></div>';
-    if (payCfg.demoMode) {
-      html += '<button class="btn btn-amber btn-block" id="demo-pay" type="button">🧪 Demo Pay (no real money)</button>';
-    } else {
-      html += '<div id="paypal-buttons"></div>' +
-        '<p class="muted" style="font-size:.82rem">Secure checkout by PayPal — pay as a guest with any card, no PayPal account needed. ' +
-        'Money goes straight to the admin\'s PayPal.</p>';
-    }
+    /* pay section — one button: DEMO in demo mode, PAY when live (card only) */
+    html += '<section class="card" aria-label="Make a payment"><h2>Chip in</h2>' +
+      paySectionHtml(payCfg, fund, 'pay') + '</section>';
     html += '</section>';
 
     viewEl.innerHTML = html;
@@ -790,84 +901,12 @@
       fileInput.value = '';
     });
 
-    /* payment wiring */
-    function readAmount() {
-      var raw = document.getElementById('pay-amount').value;
-      var amt = parseFloat(raw);
-      return (isFinite(amt) && amt > 0) ? amt : null;
-    }
-    function setPayStatus(msg) {
-      var el = document.getElementById('pay-status');
-      if (el) el.textContent = msg;
-    }
-    async function afterPayment(amountCents) {
+    /* payment wiring — one button: DEMO in demo mode, PAY when live (card only) */
+    wirePaySection('pay', payCfg, async function (amountCents) {
       toast('Payment received: ' + centsToDollars(amountCents) + ' 🎉');
       await refreshStatus();
       renderDashboard();
-    }
-
-    if (payCfg.demoMode) {
-      var demoBtn = document.getElementById('demo-pay');
-      demoBtn.addEventListener('click', async function () {
-        var amt = readAmount();
-        if (amt == null) { setPayStatus('Enter an amount greater than $0 first.'); return; }
-        setBusy(demoBtn, true, 'Processing demo payment…');
-        setPayStatus('Creating demo order…');
-        try {
-          var o = await api('/api/pay/create-order', { method: 'POST', body: { amountDollars: amt } });
-          setPayStatus('Capturing demo order…');
-          var c = await api('/api/pay/capture-order', { method: 'POST', body: { orderId: o.orderId } });
-          setPayStatus('');
-          await afterPayment(c.amountCents);
-        } catch (err) {
-          setPayStatus('');
-          setBusy(demoBtn, false);
-          toast(err.message);
-        }
-      });
-    } else {
-      var clientId = payCfg.paypalClientId;
-      if (!clientId) {
-        setPayStatus('PayPal is not connected yet — the admin needs to add PayPal credentials in fund setup.');
-        return;
-      }
-      setPayStatus('Loading secure PayPal checkout…');
-      loadPaypalSdk(clientId).then(function () {
-        setPayStatus('');
-        if (!window.paypal || !window.paypal.Buttons) {
-          setPayStatus('PayPal checkout could not start. Please try again later.');
-          return;
-        }
-        window.paypal.Buttons({
-          style: { layout: 'vertical', shape: 'pill', label: 'paypal' },
-          createOrder: async function () {
-            var amt = readAmount();
-            if (amt == null) throw new Error('Enter an amount greater than $0 first.');
-            var r = await api('/api/pay/create-order', { method: 'POST', body: { amountDollars: amt } });
-            return r.orderId;
-          },
-          onApprove: async function (data) {
-            setPayStatus('Confirming your payment… ⏳');
-            try {
-              var r = await api('/api/pay/capture-order', { method: 'POST', body: { orderId: data.orderID } });
-              setPayStatus('');
-              await afterPayment(r.amountCents);
-            } catch (err) {
-              setPayStatus('');
-              toast(err.status === 402 ? err.message : 'Payment confirmation failed: ' + err.message);
-            }
-          },
-          onCancel: function () { setPayStatus('Payment cancelled — no charge was made.'); },
-          onError: function (err) {
-            var msg = (err && err.message) ? err.message : 'PayPal ran into a problem. Please try again.';
-            setPayStatus('');
-            toast(msg);
-          }
-        }).render('#paypal-buttons');
-      }).catch(function (err) {
-        setPayStatus(err.message);
-      });
-    }
+    });
   }
 
   /* ============================================================
@@ -877,13 +916,14 @@
     viewEl.innerHTML = '<div class="card"><div class="skeleton" style="height:200px"></div></div>' +
       '<div class="card"><div class="skeleton" style="height:140px"></div></div>';
 
-    var fundData = null, notifData = null, failed = null;
+    var fundData = null, notifData = null, payCfg = null, failed = null;
     try {
       var results = await Promise.all([
         api('/api/fund'),
-        api('/api/admin/notifications')
+        api('/api/admin/notifications'),
+        api('/api/pay/config')
       ]);
-      fundData = results[0]; notifData = results[1];
+      fundData = results[0]; notifData = results[1]; payCfg = results[2];
     } catch (e) {
       failed = e;
     }
@@ -939,7 +979,9 @@
           '<div class="mt">' + progressBar(Math.min(100, mpct), 'My contribution progress') + '</div>' +
           '<div class="progress-labels"><span>' + mpct.toFixed(1) + '% of my share</span></div>';
       }
-      html += '<h3>Record a contribution</h3>' +
+      /* pay my own share by card — same single button as contributors */
+      html += '<h3>Pay my share by card</h3>' + paySectionHtml(payCfg, fund, 'apay') +
+        '<h3>Record a contribution</h3>' +
         '<p class="muted">Money you put in directly — no PayPal fee, since it\'s your own account. ' +
         'Shows up in the ledger and scoreboard like any other payment.</p>' +
         '<form id="manual-pay-form" novalidate>' +
@@ -1017,6 +1059,12 @@
     html += '<div class="center"><a class="btn btn-ghost" href="#/">View public fund page</a></div>';
 
     viewEl.innerHTML = html;
+
+    /* admin pays their own share by card — same single button as contributors */
+    wirePaySection('apay', payCfg, async function (amountCents) {
+      toast('Payment received: ' + centsToDollars(amountCents) + ' 🎉');
+      renderAdminPanel();
+    });
 
     /* manual contribution form wiring */
     (function () {
