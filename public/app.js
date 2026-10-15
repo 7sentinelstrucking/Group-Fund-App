@@ -678,7 +678,7 @@
     if (paypalSdkPromise) return paypalSdkPromise;
     paypalSdkPromise = new Promise(function (resolve, reject) {
       var s = document.createElement('script');
-      s.src = 'https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(clientId) + '&currency=USD&components=card-fields';
+      s.src = 'https://www.paypal.com/sdk/js?client-id=' + encodeURIComponent(clientId) + '&currency=USD&components=buttons';
       s.onload = function () { resolve(); };
       s.onerror = function () { reject(new Error('PayPal SDK failed to load. Check your connection and try again.')); };
       document.head.appendChild(s);
@@ -688,7 +688,7 @@
 
   /* Single pay button shared by the contributor dashboard and the admin panel.
      Demo mode: button says DEMO and the payment is simulated.
-     Live mode: button says PAY and PayPal hosted card fields are shown — credit card only. */
+     Live mode: one PayPal "Pay" button, card funding only — credit card only. */
   function paySectionHtml(payCfg, fund, p) {
     var demo = !!payCfg.demoMode;
     var suggested = fund && fund.monthlyCents > 0 ? (fund.monthlyCents / 100) : '';
@@ -697,19 +697,12 @@
     h += '<div class="pay-amount-row"><div class="field"><label for="' + p + '-amount">Amount (USD)</label>' +
       '<input id="' + p + '-amount" type="number" min="0.01" step="0.01" inputmode="decimal" placeholder="25.00"' +
       (suggested !== '' ? ' value="' + esc(String(suggested)) + '"' : '') + '></div></div>';
-    if (!demo) {
-      h += '<div class="cf-grid">' +
-        '<div class="field"><label>Card number</label><div id="' + p + '-card-number" class="cf-field"></div></div>' +
-        '<div class="cf-row">' +
-        '<div class="field"><label>Expiry</label><div id="' + p + '-card-expiry" class="cf-field"></div></div>' +
-        '<div class="field"><label>CVV</label><div id="' + p + '-card-cvv" class="cf-field"></div></div>' +
-        '</div></div>';
-    }
-    h += '<div class="muted" id="' + p + '-status" style="min-height:1.4em;margin:8px 0"></div>' +
-      '<button class="btn btn-block ' + (demo ? 'btn-amber' : 'btn-green') + '" id="' + p + '-btn" type="button">' +
-      (demo ? 'DEMO' : 'PAY') + '</button>';
-    if (!demo) {
-      h += '<p class="muted" style="font-size:.82rem">Secure card checkout by PayPal — credit card only. ' +
+    h += '<div class="muted" id="' + p + '-status" style="min-height:1.4em;margin:8px 0"></div>';
+    if (demo) {
+      h += '<button class="btn btn-amber btn-block" id="' + p + '-btn" type="button">DEMO</button>';
+    } else {
+      h += '<div id="' + p + '-card-button"></div>' +
+        '<p class="muted" style="font-size:.82rem">Secure card checkout by PayPal — credit card only, no PayPal account needed. ' +
         'Money goes straight to the admin\'s PayPal.</p>';
     }
     return h;
@@ -749,23 +742,22 @@
       return;
     }
 
-    /* live: PayPal hosted card fields behind our own PAY button */
+    /* live: one PayPal button, card funding only (credit card, no PayPal login) */
     var clientId = payCfg.paypalClientId;
     if (!clientId) {
       setPayStatus('PayPal is not connected yet — the admin needs to add PayPal credentials in fund setup.');
-      btn.disabled = true;
       return;
     }
     setPayStatus('Loading secure card checkout…');
-    setBusy(btn, true, 'Loading…');
     loadPaypalSdk(clientId).then(function () {
-      setBusy(btn, false);
       setPayStatus('');
-      if (!window.paypal || !window.paypal.CardFields) {
+      if (!window.paypal || !window.paypal.Buttons) {
         setPayStatus('Card checkout could not start. Please try again later.');
         return;
       }
-      var cardFields = window.paypal.CardFields({
+      window.paypal.Buttons({
+        fundingSource: window.paypal.FUNDING.CARD,
+        style: { layout: 'vertical', shape: 'rect', label: 'pay', height: 48 },
         createOrder: async function () {
           var amt = readAmount();
           if (amt == null) throw new Error('Enter an amount greater than $0 first.');
@@ -783,30 +775,15 @@
             toast(err.status === 402 ? err.message : 'Payment confirmation failed: ' + err.message);
           }
         },
+        onCancel: function () { setPayStatus('Payment cancelled — no charge was made.'); },
         onError: function (err) {
           setPayStatus('');
           toast((err && err.message) ? err.message : 'PayPal ran into a problem. Please try again.');
         }
-      });
-      if (!cardFields.isEligible()) {
+      }).render('#' + p + '-card-button').catch(function () {
         setPayStatus('Card payments are not available right now. Please try again later.');
-        return;
-      }
-      cardFields.NumberField().render('#' + p + '-card-number');
-      cardFields.ExpiryField().render('#' + p + '-card-expiry');
-      cardFields.CVVField().render('#' + p + '-card-cvv');
-      btn.addEventListener('click', function () {
-        var amt = readAmount();
-        if (amt == null) { setPayStatus('Enter an amount greater than $0 first.'); return; }
-        setBusy(btn, true, 'Processing…');
-        setPayStatus('Processing your card…');
-        cardFields.submit().then(
-          function () { setBusy(btn, false); },
-          function () { setBusy(btn, false); setPayStatus(''); }
-        );
       });
     }).catch(function (err) {
-      setBusy(btn, false);
       setPayStatus(err.message);
     });
   }
