@@ -752,37 +752,61 @@
     loadPaypalSdk(clientId).then(function () {
       setPayStatus('');
       if (!window.paypal || !window.paypal.Buttons) {
-        setPayStatus('Card checkout could not start. Please try again later.');
+        setPayStatus('Card checkout could not start (PayPal did not load). Please try again later.');
         return;
       }
-      window.paypal.Buttons({
-        fundingSource: window.paypal.FUNDING.CARD,
-        style: { layout: 'vertical', shape: 'rect', label: 'pay', height: 48 },
-        createOrder: async function () {
-          var amt = readAmount();
-          if (amt == null) throw new Error('Enter an amount greater than $0 first.');
-          var r = await api('/api/pay/create-order', { method: 'POST', body: { amountDollars: amt } });
-          return r.orderId;
-        },
-        onApprove: async function (data) {
-          setPayStatus('Confirming your payment…');
-          try {
-            var r = await api('/api/pay/capture-order', { method: 'POST', body: { orderId: data.orderID } });
+      var mount = document.getElementById(p + '-card-button');
+      if (!mount) {
+        setPayStatus('Card checkout could not start (page error). Please reload and try again.');
+        return;
+      }
+      function buttonConfig(fundingSource) {
+        var cfg = {
+          style: { layout: 'vertical', shape: 'rect', label: 'pay', height: 48 },
+          createOrder: async function () {
+            var amt = readAmount();
+            if (amt == null) throw new Error('Enter an amount greater than $0 first.');
+            var r = await api('/api/pay/create-order', { method: 'POST', body: { amountDollars: amt } });
+            return r.orderId;
+          },
+          onApprove: async function (data) {
+            setPayStatus('Confirming your payment…');
+            try {
+              var r = await api('/api/pay/capture-order', { method: 'POST', body: { orderId: data.orderID } });
+              setPayStatus('');
+              onPaid(r.amountCents);
+            } catch (err) {
+              setPayStatus('');
+              toast(err.status === 402 ? err.message : 'Payment confirmation failed: ' + err.message);
+            }
+          },
+          onCancel: function () { setPayStatus('Payment cancelled — no charge was made.'); },
+          onError: function (err) {
             setPayStatus('');
-            onPaid(r.amountCents);
-          } catch (err) {
-            setPayStatus('');
-            toast(err.status === 402 ? err.message : 'Payment confirmation failed: ' + err.message);
+            toast((err && err.message) ? err.message : 'PayPal ran into a problem. Please try again.');
           }
-        },
-        onCancel: function () { setPayStatus('Payment cancelled — no charge was made.'); },
-        onError: function (err) {
-          setPayStatus('');
-          toast((err && err.message) ? err.message : 'PayPal ran into a problem. Please try again.');
-        }
-      }).render('#' + p + '-card-button').catch(function () {
-        setPayStatus('Card payments are not available right now. Please try again later.');
-      });
+        };
+        if (fundingSource) cfg.fundingSource = fundingSource;
+        return cfg;
+      }
+      function renderFailed(err) {
+        var detail = (err && err.message) ? err.message : String(err || 'unknown error');
+        setPayStatus('Card checkout failed to load (' + detail + '). You can pay the admin directly and have it recorded — no fee that way.');
+      }
+      function renderStandard(firstErr) {
+        // Fallback: card-only button unavailable here — offer every eligible
+        // payment method instead of leaving a dead area.
+        setPayStatus('Card-only checkout is not available in this browser — loading standard checkout…');
+        window.paypal.Buttons(buttonConfig(null)).render(mount).then(function () {
+          if (!mount.hasChildNodes()) renderFailed(firstErr || new Error('no payment buttons rendered'));
+          else setPayStatus('');
+        }).catch(renderFailed);
+      }
+      window.paypal.Buttons(buttonConfig(window.paypal.FUNDING.CARD)).render(mount).then(function () {
+        // PayPal silently renders nothing when the card button is ineligible
+        // for this buyer/merchant — catch the empty container and fall back.
+        if (!mount.hasChildNodes()) renderStandard(new Error('card button not eligible here'));
+      }).catch(renderStandard);
     }).catch(function (err) {
       setPayStatus(err.message);
     });
