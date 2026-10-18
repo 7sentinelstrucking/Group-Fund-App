@@ -917,14 +917,15 @@
     viewEl.innerHTML = '<div class="card"><div class="skeleton" style="height:200px"></div></div>' +
       '<div class="card"><div class="skeleton" style="height:140px"></div></div>';
 
-    var fundData = null, notifData = null, payCfg = null, failed = null;
+    var fundData = null, notifData = null, payCfg = null, ledgerData = null, failed = null;
     try {
       var results = await Promise.all([
         api('/api/fund'),
         api('/api/admin/notifications'),
-        api('/api/pay/config')
+        api('/api/pay/config'),
+        api('/api/ledger?limit=50')
       ]);
-      fundData = results[0]; notifData = results[1]; payCfg = results[2];
+      fundData = results[0]; notifData = results[1]; payCfg = results[2]; ledgerData = results[3];
     } catch (e) {
       failed = e;
     }
@@ -1025,6 +1026,29 @@
     }
     html += '</section>';
 
+    /* recent payments — admin can delete any single payment */
+    html += '<section class="card" aria-label="Recent payments"><h2>Recent payments 🧾</h2>';
+    var pays = (ledgerData && ledgerData.payments) || [];
+    if (!pays.length) {
+      html += '<div class="empty-state"><span class="big">🧾</span>No payments yet.</div>';
+    } else {
+      html += '<p class="muted">Tap <strong>Delete</strong> to remove a payment from the ledger, ' +
+        'totals, and scoreboard. This only deletes the record — it does not refund any money.</p>' +
+        '<div class="cp-list">';
+      pays.forEach(function (p) {
+        var srcLabel = p.source === 'manual' ? 'Manual' : (p.source === 'demo' ? 'Demo' : 'PayPal');
+        html += '<div class="cp-row pay-row" data-pid="' + p.id + '">' +
+          '<div class="cp-who">' + avatarHtml(p.avatarUrl, p.userName, 'sm') +
+          '<span class="cp-name">' + esc(p.userName) + '</span>' +
+          '<span class="muted"> · ' + centsToDollars(p.amountCents) + ' · ' + esc(fmtDate(p.createdAt)) + ' · ' + srcLabel + '</span></div>' +
+          '<div><button class="btn btn-ghost btn-sm pay-del" type="button" ' +
+          'data-pname="' + esc(p.userName) + '" data-pamount="' + centsToDollars(p.amountCents) + '">🗑️ Delete</button></div>' +
+          '</div>';
+      });
+      html += '</div>';
+    }
+    html += '</section>';
+
     /* demo data — wipe test payments before going live */
     html += '<section class="card" aria-label="Demo data"><h2>Demo data 🧹</h2>' +
       '<p class="muted">Removes every <strong>demo-mode test payment</strong> from the ledger, totals, ' +
@@ -1116,6 +1140,31 @@
             renderAdminPanel();
           } catch (err) {
             statusEl.textContent = err.message;
+            setBusy(btn, false);
+          }
+        });
+      });
+    })();
+
+    /* delete single payment wiring */
+    (function () {
+      var btns = viewEl.querySelectorAll('.pay-del');
+      btns.forEach(function (btn) {
+        btn.addEventListener('click', async function () {
+          var row = btn.closest('.pay-row');
+          var pid = row ? row.getAttribute('data-pid') : null;
+          var pname = btn.getAttribute('data-pname') || 'this contributor';
+          var pamount = btn.getAttribute('data-pamount') || '';
+          if (!pid) return;
+          if (!window.confirm('Delete the ' + pamount + ' payment from ' + pname + '?\n\n' +
+            'This only removes the record from the app — it does not refund any money.')) return;
+          setBusy(btn, true, 'Deleting…');
+          try {
+            await api('/api/admin/payments/' + pid, { method: 'DELETE' });
+            toast('Payment deleted');
+            renderAdminPanel();
+          } catch (err) {
+            toast('Could not delete: ' + err.message);
             setBusy(btn, false);
           }
         });

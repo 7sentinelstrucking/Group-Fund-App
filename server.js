@@ -347,6 +347,24 @@ app.post('/api/admin/clear-demo-payments', requireAdmin, async (req, res) => {
   }
 });
 
+// Delete one payment by id (admin only). Removes the record from the
+// ledger, totals, and scoreboard. Does NOT refund any money — a PayPal
+// payment must be refunded separately in the PayPal dashboard.
+app.delete('/api/admin/payments/:id', requireAdmin, async (req, res) => {
+  const id = Number(req.params.id);
+  if (!Number.isInteger(id) || id <= 0) {
+    return res.status(400).json({ error: 'Invalid payment id' });
+  }
+  try {
+    const deleted = await db.deletePayment(id);
+    if (!deleted) return res.status(404).json({ error: 'Payment not found' });
+    return res.json({ ok: true, id: deleted.id });
+  } catch (err) {
+    console.error('[admin/delete-payment]', err.message);
+    return res.status(500).json({ error: 'Could not delete payment' });
+  }
+});
+
 // --- users --------------------------------------------------------------------
 
 app.post('/api/users/register', async (req, res) => {
@@ -493,6 +511,7 @@ app.get('/api/ledger', async (req, res) => {
     amountCents: p.amountCents,
     createdAt: p.createdAt,
     paypalOrderId: p.paypalOrderId,
+    source: p.source,
   }));
   res.json({ payments });
 });

@@ -596,7 +596,7 @@ async function recentConfirmedPayments(limit = 50) {
   const rows = isPg()
     ? await pq(
         `SELECT p.id, p.amount_cents AS "amountCents", p.created_at AS "createdAt",
-                p.paypal_order_id AS "paypalOrderId",
+                p.paypal_order_id AS "paypalOrderId", p.source AS "source",
                 u.name AS "userName", u.avatar_path AS "avatarPath"
          FROM payments p JOIN users u ON u.id = p.user_id
          WHERE p.status = 'confirmed'
@@ -605,7 +605,7 @@ async function recentConfirmedPayments(limit = 50) {
       )
     : sall(
         `SELECT p.id, p.amount_cents AS amountCents, p.created_at AS createdAt,
-                p.paypal_order_id AS paypalOrderId,
+                p.paypal_order_id AS paypalOrderId, p.source AS source,
                 u.name AS userName, u.avatar_path AS avatarPath
          FROM payments p JOIN users u ON u.id = p.user_id
          WHERE p.status = 'confirmed'
@@ -617,9 +617,22 @@ async function recentConfirmedPayments(limit = 50) {
     amountCents: Number(r.amountCents),
     createdAt: r.createdAt,
     paypalOrderId: r.paypalOrderId,
+    source: r.source || 'paypal',
     userName: r.userName,
     avatarPath: r.avatarPath || null,
   }));
+}
+
+// Delete a single payment by id (admin only). Returns the deleted row's
+// id, or null when no such payment exists. Totals, ledger, and scoreboard
+// all derive from the payments table, so they update automatically.
+async function deletePayment(id) {
+  if (isPg()) {
+    const res = await pq('DELETE FROM payments WHERE id = $1 RETURNING id', [id]);
+    return res.rows.length ? { id: Number(res.rows[0].id) } : null;
+  }
+  const info = srun('DELETE FROM payments WHERE id = ?', id);
+  return info.changes === 1 ? { id: Number(id) } : null;
 }
 
 async function clearDemoPayments() {
@@ -660,5 +673,6 @@ module.exports = {
   addNotification,
   recentNotifications,
   recentConfirmedPayments,
+  deletePayment,
   clearDemoPayments,
 };
