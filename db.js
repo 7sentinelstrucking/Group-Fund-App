@@ -628,8 +628,10 @@ async function recentConfirmedPayments(limit = 50) {
 // all derive from the payments table, so they update automatically.
 async function deletePayment(id) {
   if (isPg()) {
-    const res = await pq('DELETE FROM payments WHERE id = $1 RETURNING id', [id]);
-    return res.rows.length ? { id: Number(res.rows[0].id) } : null;
+    // NOTE: pq() returns the mapped rows array (not the raw pg result),
+    // so use rows.length / rows[0] directly — res.rows does not exist.
+    const rows = await pq('DELETE FROM payments WHERE id = $1 RETURNING id', [id]);
+    return rows.length ? { id: Number(rows[0].id) } : null;
   }
   const info = srun('DELETE FROM payments WHERE id = ?', id);
   return info.changes === 1 ? { id: Number(id) } : null;
@@ -637,8 +639,9 @@ async function deletePayment(id) {
 
 async function clearDemoPayments() {
   if (isPg()) {
-    const res = await pq("DELETE FROM payments WHERE source = 'demo'");
-    return res.rowCount;
+    // pq() returns rows only — RETURNING id lets us count the deleted rows.
+    const rows = await pq("DELETE FROM payments WHERE source = 'demo' RETURNING id");
+    return rows.length;
   }
   const info = srun("DELETE FROM payments WHERE source = 'demo'");
   return info.changes;
